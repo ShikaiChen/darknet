@@ -366,6 +366,9 @@ void test_yolo(char *cfgfile, char *weightfile, char *filename, float thresh)
     }
 }
 void server_yolo(char* cfgfile, char* weightsfile){
+    int server_sockfd;
+    int len;
+    
     network net = parse_network_cfg(cfgfile);
     if(weightfile){
         load_weights(&net, weightfile);

@@ -1,16 +1,16 @@
-GPU=0
+GPU=1
 CUDNN=0
 OPENCV=0
 DEBUG=0
 
-ARCH= --gpu-architecture=compute_52 --gpu-code=compute_52
+ARCH= --gpu-architecture=compute_37 --gpu-code=compute_37
 
 VPATH=./src/
 EXEC=darknet
 OBJDIR=./obj/
 
 CC=gcc
-NVCC=nvcc
+NVCC=/usr/local/cuda/bin/nvcc
 OPTS=-Ofast
 LDFLAGS= -lm -pthread 
 COMMON= 

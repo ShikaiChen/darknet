@@ -6,6 +6,11 @@
 #include "box.h"
 #include "demo.h"
 
+#include "sys/socket.h"
+#include "sys/types.h"
+#include "netinet/in.h"
+#include "arpa/inet.h"
+
 #ifdef OPENCV
 #include "opencv2/highgui/highgui_c.h"
 #endif
@@ -367,7 +372,7 @@ void server_yolo(char* cfgfile, char* weightsfile){
     }
     detection_layer l = net.layers[net.n-1];
     set_batch_network(&net, 1);
-    srand(2222222);
+    srand(9182789);
     clock_t time;
     char buff[256];
     char *input = buff;

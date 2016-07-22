@@ -5,18 +5,157 @@
 #include "parser.h"
 #include "box.h"
 #include "demo.h"
+#include "image.h"
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <stdio.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 
-#include "sys/socket.h"
-#include "sys/types.h"
-#include "netinet/in.h"
-#include "arpa/inet.h"
-
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+#include <math.h>
 #ifdef OPENCV
 #include "opencv2/highgui/highgui_c.h"
 #endif
 
 char *voc_names[] = {"aeroplane", "bicycle", "bird", "boat", "bottle", "bus", "car", "cat", "chair", "cow", "diningtable", "dog", "horse", "motorbike", "person", "pottedplant", "sheep", "sofa", "train", "tvmonitor"};
 image voc_labels[20];
+
+
+const char _Base[]={"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/="};
+
+static union
+{
+    struct  
+    {
+        unsigned long a:6;
+        unsigned long b:6;
+        unsigned long c:6;
+        unsigned long d:6;
+    }Sdata;
+    unsigned char c[3];
+}Udata;
+char * Encbase64(char * orgdata,unsigned long orglen,unsigned long *newlen)  
+{  
+    char *p=NULL,*ret=NULL;  
+    int tlen=0;  
+    if (orgdata==NULL|| orglen==0)  
+        return NULL ;  
+    tlen=orglen/3;  
+    if(tlen%3!=0) tlen++;  
+    tlen=tlen*4;  
+    *newlen=tlen;  
+    if ((ret=(char *)malloc(tlen+1))==NULL)  
+        return NULL;  
+    memset(ret,0,tlen+1);  
+    p=orgdata;tlen=orglen;  
+  
+    int i=0,j=0;  
+    while(tlen>0)  
+    {  
+        Udata.c[0]=Udata.c[1]=Udata.c[2]=0;  
+        for (i=0;i<3;i++)  
+        {  
+            if (tlen<1) break;  
+            Udata.c[i]=(char)*p;  
+            tlen--;  
+            p++;  
+        }  
+        if (i==0) break;  
+        switch (i)  
+        {  
+            case 1:  
+                /*ret[j++]=_Base[Udata.Sdata.d];  
+                ret[j++]=_Base[Udata.Sdata.c];  
+                ret[j++]=_Base[64];  
+                ret[j++]=_Base[64];*/  
+                ret[j++]=_Base[Udata.c[0]>>2];  
+                ret[j++]=_Base[((Udata.c[0]&0x03)<<4)|((Udata.c[1]&0xf0)>>4)];  
+                ret[j++]=_Base[64];  
+                ret[j++]=_Base[64];  
+                break;  
+            case 2:  
+                /*ret[j++]=_Base[Udata.Sdata.d];  
+                ret[j++]=_Base[Udata.Sdata.c];  
+                ret[j++]=_Base[Udata.Sdata.b];  
+                ret[j++]=_Base[64];*/  
+                ret[j++]=_Base[Udata.c[0]>>2];  
+                ret[j++]=_Base[((Udata.c[0]&0x03)<<4)|((Udata.c[1]&0xf0)>>4)];  
+                ret[j++]=_Base[((Udata.c[1]&0x0f)<<2)|((Udata.c[2]&0xc0)>>6)];  
+                ret[j++]=_Base[64];  
+                break;  
+            case 3:  
+                /*ret[j++]=_Base[Udata.Sdata.d];  
+                ret[j++]=_Base[Udata.Sdata.c];  
+                ret[j++]=_Base[Udata.Sdata.b];  
+                ret[j++]=_Base[Udata.Sdata.a];*/  
+                ret[j++]=_Base[Udata.c[0]>>2];  
+                ret[j++]=_Base[((Udata.c[0]&0x03)<<4)|((Udata.c[1]&0xf0)>>4)];  
+                ret[j++]=_Base[((Udata.c[1]&0x0f)<<2)|((Udata.c[2]&0xc0)>>6)];  
+                ret[j++]=_Base[Udata.c[2]&0x3f];  
+                break;  
+            default:  
+                break;  
+        }  
+    }  
+    ret[j]='\0';  
+    return ret;  
+} 
+char * Decbase64(char * orgdata,unsigned long orglen, unsigned long *dstlen)
+{
+    char *p,*ret;
+    int len;
+    char ch[4]={0};
+    char *pos[4];
+    int  offset[4];
+    if (orgdata==NULL || orglen==0)
+    {
+        return NULL;
+    }
+    len=orglen*3/4;
+    if ((ret=(char *)malloc(len+1))==NULL)
+    {
+        return NULL;
+    }
+    p=orgdata;
+    len=orglen;
+    int j=0;
+    
+    while(len>0)
+    {
+        int i=0;
+        while(i<4)
+        {
+            if (len>0)
+            {
+                ch[i]=*p;
+                p++;
+                len--;
+                if ((pos[i]=(char *)strchr(_Base,ch[i]))==NULL)
+                {
+                    return NULL;
+                }
+                offset[i]=pos[i]-_Base;
+                
+            }
+            i++;
+        }
+        if (ch[0]=='='||ch[1]=='='||(ch[2]=='='&&ch[3]!='='))
+        {
+            return NULL;
+        }
+        ret[j++]=(unsigned char)(offset[0]<<2|offset[1]>>4);
+        ret[j++]=offset[2]==64?'\0':(unsigned char)(offset[1]<<4|offset[2]>>2);
+        ret[j++]=offset[3]==64?'\0':(unsigned char)((offset[2]<<6&0xc0)|offset[3]);
+    }
+    ret[j]='\0';
+    *dstlen = j;
+    return ret;
+}
 
 void train_yolo(char *cfgfile, char *weightfile)
 {
@@ -365,52 +504,178 @@ void test_yolo(char *cfgfile, char *weightfile, char *filename, float thresh)
         if (filename) break;
     }
 }
-void server_yolo(char* cfgfile, char* weightsfile){
-    int server_sockfd;
-    int len;
-    
+
+
+void Error(const char* msg){
+  perror(msg);
+  exit(0);
+}
+
+//image load_image_from_socket(int sockfd){
+    //TODO: write load_image_from_socket!
+//  return image();
+//}
+
+
+void zpad(char* buffer, int n){
+    int len = strlen(buffer);
+    int i;
+    for(i = 0; i < len; ++ i){
+        buffer[n-i-1] = buffer[len - i - 1];
+    }
+    for(i = 0; i < n - len; ++ i){
+        buffer[i] = '0';
+    }
+    buffer[n] = '\0';
+}
+void server_yolo(char* cfgfile, char* weightfile, float thresh){
+    //SOCKET RELATED VARIABLES
+    int sockfd, newsockfd, portno, fd, pid, n;
+    socklen_t clilen;
+    struct sockaddr_in serv_addr, cli_addr;
+
+    //DNN RELATED VARIABLES
     network net = parse_network_cfg(cfgfile);
     if(weightfile){
         load_weights(&net, weightfile);
     }
     detection_layer l = net.layers[net.n-1];
-    set_batch_network(&net, 1);
-    srand(9182789);
+    set_batch_network(&net,1);
+    srand(19941002);
     clock_t time;
-    char buff[256];
-    char *input = buff;
+    char* buffer;
+    float blockSize = 5;
+    char* img;
+    char sbytenum[25];
+
     int j;
-    float nms=.5;
+    float nms = 0.5;
     box *boxes = calloc(l.side*l.side*l.n, sizeof(box));
     float **probs = calloc(l.side*l.side*l.n, sizeof(float *));
     for(j = 0; j < l.side*l.side*l.n; ++j) probs[j] = calloc(l.classes, sizeof(float *));
+
+    //SOCKET
+    sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    if (sockfd < 0) Error("ERROR OPENING SOCKET");
+    //BINDING
+    bzero((char *) &serv_addr, sizeof(serv_addr));
+    portno = 1912;
+    serv_addr.sin_family = AF_INET;
+    serv_addr.sin_addr.s_addr = INADDR_ANY;
+    serv_addr.sin_port = htons(portno);
+    if (bind(sockfd, (struct sockaddr *) &serv_addr, sizeof(serv_addr)) < 0)
+        Error("ERROR ON BINDING");
+    listen(sockfd,5);
+    clilen = sizeof(cli_addr);
+    fprintf(stderr, "Socket server start\n");
     while(1){
-        if(filename){
-            strncpy(input, filename, 256);
-        } else {
-            printf("Enter Image Path: ");
-            fflush(stdout);
-            input = fgets(input, 256, stdin);
-            if(!input) return;
-            strtok(input, "\n");
+        //MULTI-THREAD LISTENING  
+        newsockfd = accept(sockfd,(struct sockaddr *) &cli_addr, &clilen);
+        if (newsockfd < 0)
+            Error("ERROR ON ACCEPT");
+        pid = fork();
+        if (pid < 0)
+            Error("ERROR on fork");
+        if (pid == 0)
+        {
+            close(sockfd);
+            buffer = (char*)malloc(blockSize);
+            img = (char*)malloc(2*1024*1024);
+            bzero(buffer,blockSize);
+            n = read(newsockfd,buffer,10);
+            write(newsockfd,"got",3);
+            fprintf(stderr, "num: %s.\n",buffer);
+            int byteNum = atoi(buffer);
+            int bnum = ceil(byteNum/blockSize);
+            fprintf(stderr, "bnum: %d.\n",bnum);
+            unsigned long idx = 0;
+            int i,ps;
+            for(i = 0; i < bnum; ++i){
+                if(byteNum > blockSize) ps = blockSize;
+                else ps = byteNum;
+                fprintf(stderr, "%d read\n", i);
+                n = read(newsockfd,buffer,ps);
+                byteNum -= ps;
+                fprintf(stderr, "i: %d. %c%c \n", i ,buffer[0] ,buffer[1]);
+                memcpy(img+idx, buffer, ps);
+                idx += ps;
+            }
+            write(newsockfd,"done",4);
+            fprintf(stderr, "clen: %d. \n", idx);
+            int dstlen,newlen, len;
+            char* dec_img;
+            dec_img = Decbase64(img, idx, &dstlen);
+
+                                                        fprintf(stderr, "msg: %s \n", dec_img);
+                                                        printf("decode len %d\n", dstlen);
+                                                        char* enc_img = Encbase64(dec_img,dstlen,&newlen);
+                                                        printf("encode len %d\n", newlen);
+                                                        bnum = ceil(newlen/blockSize);
+                                                        
+                                                        sprintf(sbytenum, "%d\0", newlen);
+                                                        zpad(&sbytenum,25);
+                                                        printf("paded num %s\n", sbytenum);
+                                                        n = write(newsockfd,&sbytenum,25);
+                                                        idx = 0;
+                                                        for(i = 0; i < bnum; ++i){
+                                                            if(newlen < blockSize) ps = newlen;
+                                                            else ps = blockSize;
+                                                            newlen -= ps;
+                                                            memcpy(buffer, enc_img+idx, ps);
+                                                            n = write(newsockfd,buffer,ps);
+                                                            printf("pack send %d\n", i);
+                                                            idx += n;
+                                                        }
+                                                        free(dec_img);
+                                                        free(enc_img);
+                                                        free(img);
+                                                        free(buffer);
+                                                        exit(0);
+
+            // image im = load_image_from_memory(dec_img, dstlen, 3);
+            // image sized = resize_image(im, net.w, net.h);
+            // float *x = sized.data;
+            // time = clock();
+            // float *predictions = network_predict(net, x);
+            // printf("Predicted in %f seconds.\n", sec(clock()-time));
+            // convert_detections(predictions, l.classes, l.n, l.sqrt, l.side, 1, 1, thresh, probs, boxes, 0);
+            // if (nms) do_nms_sort(boxes, probs, l.side*l.side*l.n, l.classes, nms);
+            // draw_detections(im, l.side*l.side*l.n, thresh, boxes, probs, voc_names, voc_labels, 20);
+            // 
+            // save_image(im,"aaa");
+            // char* png = save_image_to_memory(im, &len);
+            // char* enc_img = Encbase64(png,len,&newlen);
+            // len = newlen;
+            // free(png);
+            // png = enc_img;
+            // printf("image saved len %d\n", len);
+            
+            // bnum = ceil(len/blockSize);
+            
+            // sprintf(&sbytenum, "%d\0", len);
+            // n = write(newsockfd,&sbytenum,strlen(sbytenum));
+            // idx = 0;
+            // for(i = 0; i < bnum; ++i){
+            //     if(len < blockSize) ps = len;
+            //     else ps = blockSize;
+            //     len -= ps;
+            //     memcpy(buffer, png+idx, ps);
+            //     n = write(newsockfd,buffer,ps);
+            //     printf("pack send %d\n", i);
+            //     idx += n;
+            // }
+            // free_image(im);
+            // free_image(sized);
+            // free(png);
+            // free(img);
+            // free(buffer);
+            // exit(0);
         }
-        image im = load_image_color(input,0,0);
-        image sized = resize_image(im, net.w, net.h);
-        float *X = sized.data;
-        time=clock();
-        float *predictions = network_predict(net, X);
-        printf("%s: Predicted in %f seconds.\n", input, sec(clock()-time));
-        convert_detections(predictions, l.classes, l.n, l.sqrt, l.side, 1, 1, thresh, probs, boxes, 0);
-        if (nms) do_nms_sort(boxes, probs, l.side*l.side*l.n, l.classes, nms);
-        draw_detections(im, l.side*l.side*l.n, thresh, boxes, probs, voc_names, voc_labels, 20);
-        save_image(im, "predictions");
-        show_image(im, "predictions"); 
-        show_image(sized, "resized");
-        free_image(im);
-        free_image(sized);
-        if (filename) break;
+        else
+            close(newsockfd);
     }
 }
+
 void run_yolo(int argc, char **argv)
 {
     int i;
@@ -432,8 +697,14 @@ void run_yolo(int argc, char **argv)
     char *weights = (argc > 4) ? argv[4] : 0;
     char *filename = (argc > 5) ? argv[5]: 0;
     if(0==strcmp(argv[2], "test")) test_yolo(cfg, weights, filename, thresh);
+    else if(0==strcmp(argv[2], "server")) server_yolo(cfg, weights,thresh);
     else if(0==strcmp(argv[2], "train")) train_yolo(cfg, weights);
     else if(0==strcmp(argv[2], "valid")) validate_yolo(cfg, weights);
     else if(0==strcmp(argv[2], "recall")) validate_yolo_recall(cfg, weights);
     else if(0==strcmp(argv[2], "demo")) demo(cfg, weights, thresh, cam_index, filename, voc_names, voc_labels, 20, frame_skip);
 }
+
+
+
+
+

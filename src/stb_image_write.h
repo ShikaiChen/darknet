@@ -706,6 +706,12 @@ int stbi_write_png(char const *filename, int x, int y, int comp, const void *dat
    STBIW_FREE(png);
    return 1;
 }
+char* stbi_write_png_to_memory(char const *filename, int x, int y, int comp, const void *data, int stride_bytes, int *len)
+{
+   FILE *f;
+   unsigned char *png = stbi_write_png_to_mem((unsigned char *) data, stride_bytes, x, y, comp, len);
+   return png;
+}
 #endif // STB_IMAGE_WRITE_IMPLEMENTATION
 
 /* Revision history

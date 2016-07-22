@@ -56,6 +56,7 @@ image collapse_images_vert(image *ims, int n);
 void show_image(image p, const char *name);
 void show_image_normalized(image im, const char *name);
 void save_image(image p, const char *name);
+char* save_image_to_memory(image im, int *len);
 void show_images(image *ims, int n, char *window);
 void show_image_layers(image p, char *name);
 void show_image_collapsed(image p, char *name);
@@ -74,6 +75,7 @@ image make_empty_image(int w, int h, int c);
 image float_to_image(int w, int h, int c, float *data);
 image copy_image(image p);
 image load_image(char *filename, int w, int h, int c);
+image load_image_from_memory(char *img, unsigned long len, int channels);
 image load_image_color(char *filename, int w, int h);
 
 float get_pixel(image m, int x, int y, int c);

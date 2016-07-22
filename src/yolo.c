@@ -543,9 +543,9 @@ void server_yolo(char* cfgfile, char* weightfile, float thresh){
     set_batch_network(&net,1);
     srand(19941002);
     clock_t time;
-    char* buffer;
-    float blockSize = 5;
-    char* img;
+    char buffer[100000];
+    float blockSize = 100000;
+    char img[2*1024*1024];
     char sbytenum[25];
 
     int j;
@@ -573,103 +573,67 @@ void server_yolo(char* cfgfile, char* weightfile, float thresh){
         newsockfd = accept(sockfd,(struct sockaddr *) &cli_addr, &clilen);
         if (newsockfd < 0)
             Error("ERROR ON ACCEPT");
-        pid = fork();
+        pid = 0;
         if (pid < 0)
             Error("ERROR on fork");
         if (pid == 0)
         {
-            close(sockfd);
-            buffer = (char*)malloc(blockSize);
-            img = (char*)malloc(2*1024*1024);
             bzero(buffer,blockSize);
+            bzero(img,2*1024*1024);
             n = read(newsockfd,buffer,10);
-            write(newsockfd,"got",3);
             fprintf(stderr, "num: %s.\n",buffer);
             int byteNum = atoi(buffer);
             int bnum = ceil(byteNum/blockSize);
             fprintf(stderr, "bnum: %d.\n",bnum);
-            unsigned long idx = 0;
+            unsigned long idx;
+            idx = 0;
             int i,ps;
             for(i = 0; i < bnum; ++i){
                 if(byteNum > blockSize) ps = blockSize;
                 else ps = byteNum;
-                fprintf(stderr, "%d read\n", i);
                 n = read(newsockfd,buffer,ps);
                 byteNum -= ps;
-                fprintf(stderr, "i: %d. %c%c \n", i ,buffer[0] ,buffer[1]);
                 memcpy(img+idx, buffer, ps);
                 idx += ps;
             }
-            write(newsockfd,"done",4);
+            // write(newsockfd,"done",4);
             fprintf(stderr, "clen: %d. \n", idx);
-            int dstlen,newlen, len;
-            char* dec_img;
-            dec_img = Decbase64(img, idx, &dstlen);
 
-                                                        fprintf(stderr, "msg: %s \n", dec_img);
-                                                        printf("decode len %d\n", dstlen);
-                                                        char* enc_img = Encbase64(dec_img,dstlen,&newlen);
-                                                        printf("encode len %d\n", newlen);
-                                                        bnum = ceil(newlen/blockSize);
-                                                        
-                                                        sprintf(sbytenum, "%d\0", newlen);
-                                                        zpad(&sbytenum,25);
-                                                        printf("paded num %s\n", sbytenum);
-                                                        n = write(newsockfd,&sbytenum,25);
-                                                        idx = 0;
-                                                        for(i = 0; i < bnum; ++i){
-                                                            if(newlen < blockSize) ps = newlen;
-                                                            else ps = blockSize;
-                                                            newlen -= ps;
-                                                            memcpy(buffer, enc_img+idx, ps);
-                                                            n = write(newsockfd,buffer,ps);
-                                                            printf("pack send %d\n", i);
-                                                            idx += n;
-                                                        }
-                                                        free(dec_img);
-                                                        free(enc_img);
-                                                        free(img);
-                                                        free(buffer);
-                                                        exit(0);
-
-            // image im = load_image_from_memory(dec_img, dstlen, 3);
-            // image sized = resize_image(im, net.w, net.h);
-            // float *x = sized.data;
-            // time = clock();
-            // float *predictions = network_predict(net, x);
-            // printf("Predicted in %f seconds.\n", sec(clock()-time));
-            // convert_detections(predictions, l.classes, l.n, l.sqrt, l.side, 1, 1, thresh, probs, boxes, 0);
-            // if (nms) do_nms_sort(boxes, probs, l.side*l.side*l.n, l.classes, nms);
-            // draw_detections(im, l.side*l.side*l.n, thresh, boxes, probs, voc_names, voc_labels, 20);
-            // 
-            // save_image(im,"aaa");
-            // char* png = save_image_to_memory(im, &len);
-            // char* enc_img = Encbase64(png,len,&newlen);
-            // len = newlen;
-            // free(png);
-            // png = enc_img;
-            // printf("image saved len %d\n", len);
+            image im;
+            im = load_image_from_memory(img, idx, 3);
+            image sized;
+            sized = resize_image(im, net.w, net.h);
+            float *x;
+            x = sized.data;
+            time = clock();
+            printf("network_predict\n ");
+            float *predictions = network_predict(net, x);
+            printf("Predicted in %f seconds.\n", sec(clock()-time));
+            convert_detections(predictions, l.classes, l.n, l.sqrt, l.side, 1, 1, thresh, probs, boxes, 0);
+            if (nms) do_nms_sort(boxes, probs, l.side*l.side*l.n, l.classes, nms);
+            draw_detections(im, l.side*l.side*l.n, thresh, boxes, probs, voc_names, voc_labels, 20);
             
-            // bnum = ceil(len/blockSize);
+            int len;
+            char* png;
+            png = save_image_to_memory(im, &len);
+            printf("image saved len %d\n", len);
             
-            // sprintf(&sbytenum, "%d\0", len);
-            // n = write(newsockfd,&sbytenum,strlen(sbytenum));
-            // idx = 0;
-            // for(i = 0; i < bnum; ++i){
-            //     if(len < blockSize) ps = len;
-            //     else ps = blockSize;
-            //     len -= ps;
-            //     memcpy(buffer, png+idx, ps);
-            //     n = write(newsockfd,buffer,ps);
-            //     printf("pack send %d\n", i);
-            //     idx += n;
-            // }
-            // free_image(im);
-            // free_image(sized);
-            // free(png);
-            // free(img);
-            // free(buffer);
-            // exit(0);
+            bnum = ceil(len/blockSize);
+            
+            sprintf(&sbytenum, "%d\0", len);
+            zpad(&sbytenum,25);
+            n = write(newsockfd,&sbytenum,25);
+            idx = 0;
+            for(i = 0; i < bnum; ++i){
+                if(len < blockSize) ps = len;
+                else ps = blockSize;
+                len -= ps;
+                memcpy(buffer, png+idx, ps);
+                n = write(newsockfd,buffer,ps);
+                printf("pack send %d\n", i);
+                idx += n;
+            }
+            free(png);   
         }
         else
             close(newsockfd);

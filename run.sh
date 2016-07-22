@@ -1,1 +1,1 @@
-./darknet yolo server cfg/yolo-tiny.cfg yolo-tiny.weights
+./darknet yolo server cfg/yolo.cfg yolo.weights

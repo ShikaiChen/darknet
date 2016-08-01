@@ -998,14 +998,20 @@ image load_image_stb(char *filename, int channels)
 image load_image_stb_from_memory(char* img,unsigned long len, int channels)
 {
     int w, h, c;
-    unsigned char *data = stbi_load_from_memory(img, len, &w, &h, &c, channels);
+    w = 480;
+    h = 360;
+    c = 3;
+    image im;
+    // unsigned char *data = stbi_load_from_memory(img, len, &w, &h, &c, channels);
+    unsigned char *data = img;
     if (!data) {
-        fprintf(stderr, "Cannot load image from memory \nSTB Reason: %s\n", stbi_failure_reason());
-        exit(0);
+        // fprintf(stderr, "Cannot load image from memory \nSTB Reason: %s\n", stbi_failure_reason());
+        im.data = NULL;
+        return im;
     }
-    if(channels) c = channels;
+    // if(channels) c = channels;
     int i,j,k;
-    image im = make_image(w, h, c);
+    im = make_image(w, h, c);
     for(k = 0; k < c; ++k){
         for(j = 0; j < h; ++j){
             for(i = 0; i < w; ++i){
@@ -1015,7 +1021,6 @@ image load_image_stb_from_memory(char* img,unsigned long len, int channels)
             }
         }
     }
-    free(data);
     return im;
 }
 image load_image_from_memory(char *img, unsigned long len, int channels){

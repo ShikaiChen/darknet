@@ -12,12 +12,13 @@
 #include <arpa/inet.h>
 #include <stdio.h>
 #include <sys/stat.h>
-#include <fcntl.h>
-
+#include<fcntl.h> 
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 #include <math.h>
+#include <time.h>
+#include <sys/time.h>
 #ifdef OPENCV
 #include "opencv2/highgui/highgui_c.h"
 #endif
@@ -508,7 +509,6 @@ void test_yolo(char *cfgfile, char *weightfile, char *filename, float thresh)
 
 void Error(const char* msg){
   perror(msg);
-  exit(0);
 }
 
 //image load_image_from_socket(int sockfd){
@@ -528,14 +528,83 @@ void zpad(char* buffer, int n){
     }
     buffer[n] = '\0';
 }
+static float **probs;
+static box *boxes;
+static network net;
+static char inBuf[518400];
+static char oBuf[518400];
+static image in;
+static image in_s;
+static image det;
+static image det_s;
+static float fps = 0;
+static int newsockfd;
+static int fresh = 1;
+static char flag[10];
+pthread_t fetch_thread;
+pthread_t detect_thread;
+void *fetch_in_thread(void *ptr)
+{
+    int n;
+    n = read(newsockfd,&flag,1);
+    if(flag[0] != 'y'){
+        printf("ERROR: I don't know you!\n");
+        close(newsockfd);
+        return -1;
+    }
+    FILE *fp;
+    fp=fopen("/dev/shm/I_LOVE_CS", "r");
+    fread((void*)&inBuf, 1, 518400, fp);
+    fclose(fp);
+    in = load_image_from_memory(&inBuf, 518400, 3);
+    if(!in.data){
+        Error("ERROR: memo load failed. \n");
+        return -1;
+    }
+    image sized;
+    in_s = resize_image(in, net.w, net.h);
+    return 0;
+}
+void *detect_in_thread(void *ptr)
+{
+    float nms = .4;
+    detection_layer l = net.layers[net.n-1];
+    float *X = det_s.data;
+    float *predictions = network_predict(net, X);
+    convert_detections(predictions, l.classes, l.n, l.sqrt, l.side, 1, 1, 0.2, probs, boxes, 0);
+    if (nms > 0) do_nms(boxes, probs, l.side*l.side*l.n, l.classes, nms);
+    printf("\033[2J");
+    printf("\033[1;1H");
+    printf("\nFPS:%.0f\n",fps);
+    printf("Objects:\n\n");
+    draw_detections(det, l.side*l.side*l.n, 0.2, boxes, probs, voc_names, voc_labels, 20);
+    int i,j,k,c=3;
+    int h=360,w=480;
+    for(k = 0; k < c; ++k){
+        for(j = 0; j < h; ++j){
+            for(i = 0; i < w; ++i){
+                int dst_index = i + w*j + w*h*k;
+                int src_index = k + c*i + c*w*j;
+                oBuf[src_index] = floor(det.data[dst_index] * 255);
+            }
+        }
+    }
+    FILE *fp;
+    fp=fopen("/dev/shm/ME_TOO", "w+");
+    fwrite((void*)&oBuf, 1, 518400, fp);
+    fclose(fp);
+    return 0;
+}
 void server_yolo(char* cfgfile, char* weightfile, float thresh){
     //SOCKET RELATED VARIABLES
-    int sockfd, newsockfd, portno, fd, pid, n;
+    int sockfd, portno, fd, pid, n;
     socklen_t clilen;
     struct sockaddr_in serv_addr, cli_addr;
-
+    struct timeval timeout;
+	timeout.tv_sec=0;
+	timeout.tv_usec=50*1000;
     //DNN RELATED VARIABLES
-    network net = parse_network_cfg(cfgfile);
+    net = parse_network_cfg(cfgfile);
     if(weightfile){
         load_weights(&net, weightfile);
     }
@@ -545,18 +614,17 @@ void server_yolo(char* cfgfile, char* weightfile, float thresh){
     clock_t time;
     char buffer[100000];
     float blockSize = 100000;
-    char img[2*1024*1024];
-    char sbytenum[25];
-
-    int j;
+    char img[518400];
+    int i,j;
     float nms = 0.5;
-    box *boxes = calloc(l.side*l.side*l.n, sizeof(box));
-    float **probs = calloc(l.side*l.side*l.n, sizeof(float *));
+    boxes = calloc(l.side*l.side*l.n, sizeof(box));
+    probs = calloc(l.side*l.side*l.n, sizeof(float *));
     for(j = 0; j < l.side*l.side*l.n; ++j) probs[j] = calloc(l.classes, sizeof(float *));
 
     //SOCKET
     sockfd = socket(AF_INET, SOCK_STREAM, 0);
     if (sockfd < 0) Error("ERROR OPENING SOCKET");
+
     //BINDING
     bzero((char *) &serv_addr, sizeof(serv_addr));
     portno = 1912;
@@ -568,75 +636,51 @@ void server_yolo(char* cfgfile, char* weightfile, float thresh){
     listen(sockfd,5);
     clilen = sizeof(cli_addr);
     fprintf(stderr, "Socket server start\n");
+    struct timespec abstime;
     while(1){
         //MULTI-THREAD LISTENING  
-        newsockfd = accept(sockfd,(struct sockaddr *) &cli_addr, &clilen);
-        if (newsockfd < 0)
-            Error("ERROR ON ACCEPT");
-        pid = 0;
-        if (pid < 0)
-            Error("ERROR on fork");
-        if (pid == 0)
+        if(fresh)
         {
-            bzero(buffer,blockSize);
-            bzero(img,2*1024*1024);
-            n = read(newsockfd,buffer,10);
-            fprintf(stderr, "num: %s.\n",buffer);
-            int byteNum = atoi(buffer);
-            int bnum = ceil(byteNum/blockSize);
-            fprintf(stderr, "bnum: %d.\n",bnum);
-            unsigned long idx;
-            idx = 0;
-            int i,ps;
-            for(i = 0; i < bnum; ++i){
-                if(byteNum > blockSize) ps = blockSize;
-                else ps = byteNum;
-                n = read(newsockfd,buffer,ps);
-                byteNum -= ps;
-                memcpy(img+idx, buffer, ps);
-                idx += ps;
+            newsockfd = accept(sockfd,(struct sockaddr *) &cli_addr, &clilen);
+            if (newsockfd < 0){
+                close(newsockfd);
+                Error("ERROR ON ACCEPT");
+                continue;
             }
-            // write(newsockfd,"done",4);
-            fprintf(stderr, "clen: %d. \n", idx);
-
-            image im;
-            im = load_image_from_memory(img, idx, 3);
-            image sized;
-            sized = resize_image(im, net.w, net.h);
-            float *x;
-            x = sized.data;
-            time = clock();
-            printf("network_predict\n ");
-            float *predictions = network_predict(net, x);
-            printf("Predicted in %f seconds.\n", sec(clock()-time));
-            convert_detections(predictions, l.classes, l.n, l.sqrt, l.side, 1, 1, thresh, probs, boxes, 0);
-            if (nms) do_nms_sort(boxes, probs, l.side*l.side*l.n, l.classes, nms);
-            draw_detections(im, l.side*l.side*l.n, thresh, boxes, probs, voc_names, voc_labels, 20);
-            
-            int len;
-            char* png;
-            png = save_image_to_memory(im, &len);
-            printf("image saved len %d\n", len);
-            
-            bnum = ceil(len/blockSize);
-            
-            sprintf(&sbytenum, "%d\0", len);
-            zpad(&sbytenum,25);
-            n = write(newsockfd,&sbytenum,25);
-            idx = 0;
-            for(i = 0; i < bnum; ++i){
-                if(len < blockSize) ps = len;
-                else ps = blockSize;
-                len -= ps;
-                memcpy(buffer, png+idx, ps);
-                n = write(newsockfd,buffer,ps);
-                printf("pack send %d\n", i);
-                idx += n;
-            }
-            free(png);   
-        }
-        else
+            pthread_t fetch_thread;
+            pthread_t detect_thread;
+            clock_gettime(CLOCK_REALTIME, &abstime);
+            abstime.tv_sec += 1;
+            fetch_in_thread(0);
+            // fetch_in_thread(0);
+            det = in;
+            det_s = in_s;
+            n = write(newsockfd,"y",1);
             close(newsockfd);
+            fresh = 0;
+        }
+        else{
+            newsockfd = accept(sockfd,(struct sockaddr *) &cli_addr, &clilen);
+            struct timeval tval_before, tval_after, tval_result;
+            gettimeofday(&tval_before, NULL);
+            clock_gettime(CLOCK_REALTIME, &abstime);
+            abstime.tv_sec += 1;
+            if(pthread_create(&fetch_thread, 0, fetch_in_thread, 0)) error("ERROR: Thread creation failed!\n");
+            if(pthread_create(&detect_thread, 0, detect_in_thread, 0)) error("ERROR: Thread creation failed!\n");
+            pthread_join(fetch_thread, 0);
+            pthread_join(detect_thread, 0);
+            write(newsockfd,"y",1);
+            free_image(det);
+            free_image(det_s);
+            det   = in;
+            det_s = in_s;
+            gettimeofday(&tval_after, NULL);
+            timersub(&tval_after, &tval_before, &tval_result);
+            float curr = 1000000.f/((long int)tval_result.tv_usec);
+            fps = .9*fps + .1*curr;
+            close(newsockfd);
+        }
+        
     }
 }
 

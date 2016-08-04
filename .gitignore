@@ -5,6 +5,7 @@ Makefile
 *.csv
 *.out
 *.png
+core
 mnist/
 data/
 caffe/

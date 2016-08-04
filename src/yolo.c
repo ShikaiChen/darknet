@@ -507,10 +507,6 @@ void test_yolo(char *cfgfile, char *weightfile, char *filename, float thresh)
 }
 
 
-void Error(const char* msg){
-  perror(msg);
-}
-
 //image load_image_from_socket(int sockfd){
     //TODO: write load_image_from_socket!
 //  return image();
@@ -538,46 +534,62 @@ static image in_s;
 static image det;
 static image det_s;
 static float fps = 0;
-static int newsockfd;
-static int fresh = 1;
-static char flag[10];
+static int newsockfd1;
+static int newsockfd2;
+
+static int stop = 0;
 pthread_t fetch_thread;
 pthread_t detect_thread;
 void *fetch_in_thread(void *ptr)
 {
+	char flag[10];
     int n;
-    n = read(newsockfd,&flag,1);
-    if(flag[0] != 'y'){
-        printf("ERROR: I don't know you!\n");
-        close(newsockfd);
+    // printf("yolo fetch expecting y!\n");
+    n = read(newsockfd1,&flag, 1);
+    // printf("yolo fetch read y !\n");
+    if(flag[0] != 'y' || n == 0){
+        printf("ERROR: I don't know you %d!\n", n);
+        stop = 1;
         return -1;
     }
+    // printf("yolo read %s!\n", flag);
     FILE *fp;
     fp=fopen("/dev/shm/I_LOVE_CS", "r");
     fread((void*)&inBuf, 1, 518400, fp);
     fclose(fp);
+    //printf("yolo read file\n");
     in = load_image_from_memory(&inBuf, 518400, 3);
+    //printf("yolo load image\n");
     if(!in.data){
-        Error("ERROR: memo load failed. \n");
+        printf("ERROR: memo load failed. \n");
         return -1;
     }
-    image sized;
     in_s = resize_image(in, net.w, net.h);
+    // printf("yolo fetch done\n");
     return 0;
 }
 void *detect_in_thread(void *ptr)
 {
+	//printf("yolo detecting!\n");
+	int n;
     float nms = .4;
     detection_layer l = net.layers[net.n-1];
+    if(!det_s.data){
+    	printf("yolo detect bug!\n");
+    	return -1;
+    }
     float *X = det_s.data;
     float *predictions = network_predict(net, X);
+    //printf("yolo predicted!\n");
     convert_detections(predictions, l.classes, l.n, l.sqrt, l.side, 1, 1, 0.2, probs, boxes, 0);
     if (nms > 0) do_nms(boxes, probs, l.side*l.side*l.n, l.classes, nms);
-    printf("\033[2J");
-    printf("\033[1;1H");
-    printf("\nFPS:%.0f\n",fps);
-    printf("Objects:\n\n");
+    // printf("\033[2J");
+    // printf("\033[1;1H");
+    // printf("\nFPS:%.0f\n",fps);
+    // printf("Objects:\n\n");
+    //printf("yolo draw\n");
     draw_detections(det, l.side*l.side*l.n, 0.2, boxes, probs, voc_names, voc_labels, 20);
+    //printf("yolo draw done\n");
     int i,j,k,c=3;
     int h=360,w=480;
     for(k = 0; k < c; ++k){
@@ -593,16 +605,19 @@ void *detect_in_thread(void *ptr)
     fp=fopen("/dev/shm/ME_TOO", "w+");
     fwrite((void*)&oBuf, 1, 518400, fp);
     fclose(fp);
+    n = write(newsockfd2,"y",1);
+    //printf("yolo det done\n");
+    if(n <= 0){
+    	stop = 1;
+    	printf("yolo det stop!\n");
+    }
     return 0;
 }
 void server_yolo(char* cfgfile, char* weightfile, float thresh){
     //SOCKET RELATED VARIABLES
-    int sockfd, portno, fd, pid, n;
-    socklen_t clilen;
-    struct sockaddr_in serv_addr, cli_addr;
-    struct timeval timeout;
-	timeout.tv_sec=0;
-	timeout.tv_usec=50*1000;
+    int sockfd1, sockfd2, fd, n;
+    socklen_t clilen1, clilen2;
+    struct sockaddr_in serv_addr1, serv_addr2, cli_addr1, cli_addr2;
     //DNN RELATED VARIABLES
     net = parse_network_cfg(cfgfile);
     if(weightfile){
@@ -622,66 +637,101 @@ void server_yolo(char* cfgfile, char* weightfile, float thresh){
     for(j = 0; j < l.side*l.side*l.n; ++j) probs[j] = calloc(l.classes, sizeof(float *));
 
     //SOCKET
-    sockfd = socket(AF_INET, SOCK_STREAM, 0);
-    if (sockfd < 0) Error("ERROR OPENING SOCKET");
+    sockfd1 = socket(AF_INET, SOCK_STREAM, 0);
+    if (sockfd1 < 0) printf("ERROR OPENING SOCKET 1");
+    sockfd2 = socket(AF_INET, SOCK_STREAM, 0);
+    if (sockfd2 < 0) printf("ERROR OPENING SOCKET 2");
 
     //BINDING
-    bzero((char *) &serv_addr, sizeof(serv_addr));
-    portno = 1912;
-    serv_addr.sin_family = AF_INET;
-    serv_addr.sin_addr.s_addr = INADDR_ANY;
-    serv_addr.sin_port = htons(portno);
-    if (bind(sockfd, (struct sockaddr *) &serv_addr, sizeof(serv_addr)) < 0)
-        Error("ERROR ON BINDING");
-    listen(sockfd,5);
-    clilen = sizeof(cli_addr);
-    fprintf(stderr, "Socket server start\n");
-    struct timespec abstime;
-    while(1){
-        //MULTI-THREAD LISTENING  
-        if(fresh)
-        {
-            newsockfd = accept(sockfd,(struct sockaddr *) &cli_addr, &clilen);
-            if (newsockfd < 0){
-                close(newsockfd);
-                Error("ERROR ON ACCEPT");
-                continue;
-            }
-            pthread_t fetch_thread;
-            pthread_t detect_thread;
-            clock_gettime(CLOCK_REALTIME, &abstime);
-            abstime.tv_sec += 1;
-            fetch_in_thread(0);
-            // fetch_in_thread(0);
-            det = in;
-            det_s = in_s;
-            n = write(newsockfd,"y",1);
-            close(newsockfd);
-            fresh = 0;
-        }
-        else{
-            newsockfd = accept(sockfd,(struct sockaddr *) &cli_addr, &clilen);
-            struct timeval tval_before, tval_after, tval_result;
-            gettimeofday(&tval_before, NULL);
-            clock_gettime(CLOCK_REALTIME, &abstime);
-            abstime.tv_sec += 1;
-            if(pthread_create(&fetch_thread, 0, fetch_in_thread, 0)) error("ERROR: Thread creation failed!\n");
-            if(pthread_create(&detect_thread, 0, detect_in_thread, 0)) error("ERROR: Thread creation failed!\n");
-            pthread_join(fetch_thread, 0);
-            pthread_join(detect_thread, 0);
-            write(newsockfd,"y",1);
-            free_image(det);
-            free_image(det_s);
-            det   = in;
-            det_s = in_s;
-            gettimeofday(&tval_after, NULL);
-            timersub(&tval_after, &tval_before, &tval_result);
-            float curr = 1000000.f/((long int)tval_result.tv_usec);
-            fps = .9*fps + .1*curr;
-            close(newsockfd);
-        }
-        
+    bzero((char *) &serv_addr1, sizeof(serv_addr1));
+    bzero((char *) &serv_addr2, sizeof(serv_addr2));
+    serv_addr1.sin_family = AF_INET;
+    serv_addr1.sin_addr.s_addr = INADDR_ANY;
+    serv_addr1.sin_port = htons(1912);
+    serv_addr2.sin_family = AF_INET;
+    serv_addr2.sin_addr.s_addr = INADDR_ANY;
+    serv_addr2.sin_port = htons(1913);
+    if (bind(sockfd1, (struct sockaddr *) &serv_addr1, sizeof(serv_addr1)) < 0){
+        printf("ERROR ON BINDING 1");
+        return -1;
     }
+    if (bind(sockfd2, (struct sockaddr *) &serv_addr2, sizeof(serv_addr2)) < 0){
+        printf("ERROR ON BINDING 2");
+        return -1;
+    }
+    listen(sockfd1,5);
+    listen(sockfd2,5);
+    clilen1 = sizeof(cli_addr1);
+    clilen2 = sizeof(cli_addr2);
+    fprintf(stderr, "Socket server start\n");
+    struct timeval tval_last, tval_now;
+    pthread_t fetch_thread;
+    pthread_t detect_thread;
+    int fresh;
+    while(1)
+    {
+    	fresh = 1;
+    	newsockfd1 = accept(sockfd1,(struct sockaddr *) &cli_addr1, &clilen1);
+    	if (newsockfd1 < 0){
+            printf("ERROR ON ACCEPT 1\n");
+            continue;
+        }
+    	newsockfd2 = accept(sockfd2,(struct sockaddr *) &cli_addr2, &clilen2);
+    	if (newsockfd2 < 0){
+            printf("ERROR ON ACCEPT 2\n");
+            continue;
+        }
+        printf("1&2 Connected OK!\n");
+    	while(1){
+	        // gettimeofday(&tval_now, NULL);
+	        if(fresh)
+	        {
+	            //printf("OK! NEW START!");
+	            fetch_in_thread(0);
+	            n = write(newsockfd2,"n",1);
+	            //printf("yolo wrote n %d\n", n);
+	            det = in;
+	            det_s = in_s;
+	            
+	            if(n <= 0){
+	            	close(newsockfd1);
+	            	close(newsockfd2);
+	            	break;
+	            }
+	            fresh = 0;
+	        }
+	        else
+	        {
+	            // struct timeval tval_before, tval_after, tval_result;
+	            // gettimeofday(&tval_before, NULL);
+	            //printf("start!\n");
+	            if(pthread_create(&fetch_thread, 0, fetch_in_thread, 0)) printf("ERROR: Thread creation failed!\n");
+	            if(pthread_create(&detect_thread, 0, detect_in_thread, 0)) printf("ERROR: Thread creation failed!\n");
+	            pthread_join(fetch_thread, 0);
+	            pthread_join(detect_thread, 0);
+	            //printf("%s\n");
+	            if(n <= 0) break;
+	            if(det.data) free_image(det);
+	            if(det_s.data) free_image(det_s);
+	            //printf("joined!\n");
+            	det = in;
+            	det_s = in_s;
+	            
+	            // gettimeofday(&tval_after, NULL);
+	            // timersub(&tval_after, &tval_before, &tval_result);
+	            // float curr = 1000000.f/((long int)tval_result.tv_usec);
+	            // fps = .9*fps + .1*curr;
+	        }
+	        tval_last = tval_now;
+	        if(stop){
+	        	close(newsockfd2);
+	        	close(newsockfd1);
+	        	stop = 0;
+	        	break;
+	        }
+    	}
+    }
+    
 }
 
 void run_yolo(int argc, char **argv)

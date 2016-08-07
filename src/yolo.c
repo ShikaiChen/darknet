@@ -630,6 +630,7 @@ void server_yolo(char* cfgfile, char* weightfile, float thresh){
     char buffer[100000];
     float blockSize = 100000;
     char img[518400];
+    char flag[10];
     int i,j;
     float nms = 0.5;
     boxes = calloc(l.side*l.side*l.n, sizeof(box));
@@ -684,11 +685,18 @@ void server_yolo(char* cfgfile, char* weightfile, float thresh){
         printf("1&2 Connected OK!\n");
     	while(1){
 	        // gettimeofday(&tval_now, NULL);
+            // if(fps < 30){
+            //     n = read(newsockfd1,&flag, 1);
+            //     n = write(newsockfd2,"y",1);
+            //     fps += 1;
+            //     continue;
+            // }
 	        if(fresh)
 	        {
 	            //printf("OK! NEW START!");
+                fps = 30;
 	            fetch_in_thread(0);
-	            n = write(newsockfd2,"n",1);
+                n = write(newsockfd2,"n",1);
 	            //printf("yolo wrote n %d\n", n);
 	            det = in;
 	            det_s = in_s;

@@ -8,7 +8,7 @@ CheckProcess()
  
 
   PROCESS_NUM=`ps -ef | grep "$1" | grep -v "grep" | wc -l` 
-  if [ $PROCESS_NUM -eq 2 ];
+  if [ $PROCESS_NUM -eq 1 ];
   then
     return 0
   else
@@ -23,8 +23,8 @@ while [ 1 ] ; do
  CheckQQ_RET=$?
  if [ $CheckQQ_RET -eq 1 ];
  then 
-  sudo killall -9 janus
-  exec sudo janus &  
+  killall -9 janus
+  exec janus &  
  fi
  sleep 1
 done
